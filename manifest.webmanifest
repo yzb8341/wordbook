@@ -1,0 +1,26 @@
+{
+  "name": "单词听读",
+  "short_name": "单词听读",
+  "description": "背单词：录入、翻译、逐字母拼读、循环听、闪卡与选择题复习",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f7fb",
+  "theme_color": "#4F6EF7",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
