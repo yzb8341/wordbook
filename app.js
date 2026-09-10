@@ -101,13 +101,43 @@ let ttsToken = 0;
 let loopMode = null; // 'once' | 'word' | 'list' | null
 let loopStop = false;
 
+function allVoices() {
+  if (!('speechSynthesis' in window)) return [];
+  return speechSynthesis.getVoices() || [];
+}
+
+function voiceIdentifier(v) {
+  return v.name || v.voiceURI || '';
+}
+
+function isGoogleVoice(v) {
+  return /google/i.test(v.name || '') || /google/i.test(v.voiceURI || '');
+}
+
+function isNeuralLike(v) {
+  return /neural|natural|online/i.test((v.name || '') + ' ' + (v.voiceURI || ''));
+}
+
+function bestDefaultVoice(voices) {
+  const en = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith('en'));
+  const google = en.filter(isGoogleVoice);
+  const neural = google.filter(isNeuralLike);
+  const pick = (list) =>
+    list.find((v) => /en-us/i.test(v.lang)) ||
+    list.find((v) => /en-gb/i.test(v.lang)) ||
+    list[0];
+  return pick(neural) || pick(google) || pick(en) || voices[0] || null;
+}
+
 function pickVoice() {
   if (!('speechSynthesis' in window)) return null;
-  const vs = speechSynthesis.getVoices();
-  const en = vs.filter((v) => v.lang && v.lang.toLowerCase().startsWith('en'));
-  return en.find((v) => v.lang.toLowerCase() === 'en-us') ||
-    en.find((v) => v.lang.toLowerCase() === 'en-gb') ||
-    en[0] || null;
+  const vs = allVoices();
+  if (!vs.length) return null;
+  if (savedVoiceId) {
+    const saved = vs.find((v) => voiceIdentifier(v) === savedVoiceId);
+    if (saved) return saved;
+  }
+  return bestDefaultVoice(vs);
 }
 
 function speak(text, rate) {
@@ -237,6 +267,7 @@ let currentWordId = null;
 let queueIds = new Set();
 let listenGap = 2;
 let listenRate = 1;
+let savedVoiceId = '';
 let reviewMode = 'flash';
 let review = null;
 let bulkPreview = [];
@@ -759,17 +790,60 @@ function advanceReview() {
 
 /* ============================= settings ============================= */
 
+function voiceOptionsHtml(selectedId) {
+  const voices = allVoices();
+  const groups = new Map();
+  for (const v of voices) {
+    const lang = v.lang || 'unknown';
+    if (!groups.has(lang)) groups.set(lang, []);
+    groups.get(lang).push(v);
+  }
+  const keys = [...groups.keys()].sort((a, b) => {
+    const ae = /^en/i.test(a);
+    const be = /^en/i.test(b);
+    if (ae !== be) return ae ? -1 : 1;
+    return a.localeCompare(b);
+  });
+  let html = `<option value="" ${selectedId ? '' : 'selected'}>自动（优先 Google 神经语音）</option>`;
+  for (const key of keys) {
+    html += `<optgroup label="${esc(key)}">`;
+    for (const v of groups.get(key)) {
+      const id = voiceIdentifier(v);
+      html += `<option value="${esc(id)}" ${id === selectedId ? 'selected' : ''}>${esc(v.name || id)} (${esc(v.lang || '')})</option>`;
+    }
+    html += '</optgroup>';
+  }
+  return html;
+}
+
+function voiceStatusText() {
+  const voices = allVoices();
+  if (!voices.length) return '语音正在加载…';
+  const eff = pickVoice();
+  const effName = eff ? (eff.name + ' · ' + (eff.lang || '')) : '默认英文';
+  return '共 ' + voices.length + ' 个语音 · 当前：' + effName;
+}
+
+function onVoiceChange(value) {
+  savedVoiceId = value || '';
+  setSetting('voice', savedVoiceId);
+  const st = document.getElementById('voiceStatus');
+  if (st) st.textContent = voiceStatusText();
+  toast(value ? '已切换声音' : '已切换为自动（优先 Google）');
+}
+
+function previewVoice() {
+  if (!('speechSynthesis' in window)) { toast('当前浏览器不支持语音'); return; }
+  speechSynthesis.cancel();
+  setTimeout(() => speak('hello world', 1), 60);
+}
+
 async function renderSettings() {
   setTopbar('设置', null);
   const gap = await getSetting('intervalSeconds', 2);
   const rate = await getSetting('rate', 1);
-  const ttsOk = 'speechSynthesis' in window;
-  let ttsDesc;
-  if (!ttsOk) ttsDesc = '当前浏览器不支持语音';
-  else {
-    const n = speechSynthesis.getVoices().filter((v) => v.lang && v.lang.toLowerCase().startsWith('en')).length;
-    ttsDesc = n ? '检测到 ' + n + ' 个英语语音' : '支持语音（语音正在加载）';
-  }
+  const voiceId = await getSetting('voice', '');
+  savedVoiceId = voiceId;
   document.getElementById('screen').innerHTML = `
     <div class="card">
       <div class="setting-row">
@@ -780,8 +854,12 @@ async function renderSettings() {
         <div><div class="lbl">朗读速度</div><div class="sub">0.5 慢速 ~ 1.5 快速</div></div>
         <select id="setRate">${rateOptionsHtml(rate)}</select>
       </div>
-      <div class="setting-row">
-        <div><div class="lbl">发音引擎</div><div class="sub">${esc(ttsDesc)}</div></div>
+      <div class="setting-row" style="align-items:flex-start">
+        <div><div class="lbl">声音选择</div><div class="sub" id="voiceStatus">${esc(voiceStatusText())}</div></div>
+        <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+          <select id="setVoice" onchange="onVoiceChange(this.value)" style="width:190px;max-width:50vw">${voiceOptionsHtml(voiceId)}</select>
+          <button class="btn ghost" style="padding:8px 14px" onclick="previewVoice()">试听</button>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -862,8 +940,11 @@ async function init() {
   }
   if ('speechSynthesis' in window) {
     speechSynthesis.getVoices();
-    speechSynthesis.onvoiceschanged = () => {};
+    speechSynthesis.onvoiceschanged = () => {
+      if (currentTab === 'settings') renderSettings();
+    };
   }
+  savedVoiceId = await getSetting('voice', '');
   loadDict().catch(() => {});
   document.querySelectorAll('#tabbar button').forEach((b) => {
     b.addEventListener('click', () => goTab(b.dataset.tab));
