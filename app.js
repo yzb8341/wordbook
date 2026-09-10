@@ -818,7 +818,7 @@ function voiceOptionsHtml(selectedId) {
 
 function voiceStatusText() {
   const voices = allVoices();
-  if (!voices.length) return '语音正在加载…';
+  if (!voices.length) return '设备未列出语音 → 使用系统默认 TTS（Google 语音需在系统设置切换引擎）';
   const eff = pickVoice();
   const effName = eff ? (eff.name + ' · ' + (eff.lang || '')) : '默认英文';
   return '共 ' + voices.length + ' 个语音 · 当前：' + effName;
@@ -836,6 +836,28 @@ function previewVoice() {
   if (!('speechSynthesis' in window)) { toast('当前浏览器不支持语音'); return; }
   speechSynthesis.cancel();
   setTimeout(() => speak('hello world', 1), 60);
+}
+
+function warmUpVoices() {
+  if (!('speechSynthesis' in window)) return;
+  try {
+    const u = new SpeechSynthesisUtterance('');
+    u.volume = 0;
+    u.rate = 1;
+    speechSynthesis.speak(u);
+    speechSynthesis.cancel();
+  } catch (e) {}
+}
+
+function refreshVoices() {
+  if (!('speechSynthesis' in window)) { toast('当前浏览器不支持语音'); return; }
+  warmUpVoices();
+  speechSynthesis.getVoices();
+  const sel = document.getElementById('setVoice');
+  const st = document.getElementById('voiceStatus');
+  if (sel) sel.innerHTML = voiceOptionsHtml(savedVoiceId);
+  if (st) st.textContent = voiceStatusText();
+  toast('已刷新语音列表');
 }
 
 async function renderSettings() {
@@ -858,7 +880,10 @@ async function renderSettings() {
         <div><div class="lbl">声音选择</div><div class="sub" id="voiceStatus">${esc(voiceStatusText())}</div></div>
         <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
           <select id="setVoice" onchange="onVoiceChange(this.value)" style="width:190px;max-width:50vw">${voiceOptionsHtml(voiceId)}</select>
-          <button class="btn ghost" style="padding:8px 14px" onclick="previewVoice()">试听</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn ghost" style="padding:8px 12px" onclick="refreshVoices()">刷新</button>
+            <button class="btn ghost" style="padding:8px 12px" onclick="previewVoice()">试听</button>
+          </div>
         </div>
       </div>
     </div>
