@@ -142,16 +142,16 @@ function pickVoice() {
 
 function speak(text, rate) {
   return new Promise((resolve) => {
-    if (!('speechSynthesis' in window)) { resolve(); return; }
-    const u = new SpeechSynthesisUtterance(text);
-    const voice = pickVoice();
-    if (voice) { u.voice = voice; u.lang = voice.lang; } else { u.lang = 'en-US'; }
-    u.rate = rate;
+    // 用有道词典 TTS(国内访问快,免费,神经音)
+    // type=1 美式发音,type=2 英式发音
+    const url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(text)}&type=1`;
+    const audio = new Audio(url);
+    audio.playbackRate = rate;
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
-    u.onend = finish;
-    u.onerror = finish;
-    speechSynthesis.speak(u);
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.play().catch(finish);
     const fallback = Math.max(1800, (String(text).length + 3) * 900 / Math.max(0.3, rate));
     setTimeout(finish, fallback);
   });
