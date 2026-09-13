@@ -100,6 +100,7 @@ function lookup(word) {
 let ttsToken = 0;
 let loopMode = null; // 'once' | 'word' | 'list' | null
 let loopStop = false;
+let currentAudio = null;
 
 function allVoices() {
   if (!('speechSynthesis' in window)) return [];
@@ -153,18 +154,23 @@ function ttsText(text) {
 
 function speak(text, rate) {
   return new Promise((resolve) => {
-    if (!('speechSynthesis' in window)) { resolve(); return; }
     const spoken = ttsText(text);
     if (!spoken) { resolve(); return; }
-    const u = new SpeechSynthesisUtterance(spoken);
-    const voice = pickVoice();
-    if (voice) { u.voice = voice; u.lang = voice.lang; } else { u.lang = 'en-US'; }
-    u.rate = rate;
+    // 百度翻译在线 TTS：国内可访问，任意文本都能读（含连字符/数字）
+    const url = `https://fanyi.baidu.com/gettts?lan=en&text=${encodeURIComponent(spoken)}&spd=3&source=web`;
+    const audio = new Audio(url);
+    currentAudio = audio;
+    audio.playbackRate = rate;
     let done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    u.onend = finish;
-    u.onerror = finish;
-    speechSynthesis.speak(u);
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (currentAudio === audio) currentAudio = null;
+      resolve();
+    };
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.play().catch(finish);
     const fallback = Math.max(1800, (spoken.length + 3) * 900 / Math.max(0.3, rate));
     setTimeout(finish, fallback);
   });
@@ -184,7 +190,10 @@ async function spellWord(text, rate, hlFn, token) {
 function cancelTTS() {
   ttsToken++;
   loopStop = true;
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
 }
 
 function setLoopMode(m) { loopMode = m; updateLoopButtons(); }
