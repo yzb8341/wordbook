@@ -140,10 +140,23 @@ function pickVoice() {
   return bestDefaultVoice(vs);
 }
 
+function ttsText(text) {
+  let s = String(text).trim();
+  // 连字符/下划线换成空格，字母和数字之间加空格，方便 TTS 识别：
+  // deepseek-v4-pro → deepseek v 4 pro；Kimi K3 → Kimi K 3
+  s = s.replace(/[_-]+/g, ' ');
+  s = s.replace(/([A-Za-z])(\d)/g, '$1 $2');
+  s = s.replace(/(\d)([A-Za-z])/g, '$1 $2');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
 function speak(text, rate) {
   return new Promise((resolve) => {
     if (!('speechSynthesis' in window)) { resolve(); return; }
-    const u = new SpeechSynthesisUtterance(text);
+    const spoken = ttsText(text);
+    if (!spoken) { resolve(); return; }
+    const u = new SpeechSynthesisUtterance(spoken);
     const voice = pickVoice();
     if (voice) { u.voice = voice; u.lang = voice.lang; } else { u.lang = 'en-US'; }
     u.rate = rate;
@@ -152,7 +165,7 @@ function speak(text, rate) {
     u.onend = finish;
     u.onerror = finish;
     speechSynthesis.speak(u);
-    const fallback = Math.max(1800, (String(text).length + 3) * 900 / Math.max(0.3, rate));
+    const fallback = Math.max(1800, (spoken.length + 3) * 900 / Math.max(0.3, rate));
     setTimeout(finish, fallback);
   });
 }
