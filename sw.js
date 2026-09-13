@@ -1,20 +1,23 @@
-const CACHE = 'wordbook-v2';
-const ASSETS = [
+const CACHE = 'wordbook-v3';
+const CORE_ASSETS = [
   'index.html',
   'styles.css',
   'app.js',
   'manifest.webmanifest',
-  'dictionary.json',
   'icons/icon-192.png',
   'icons/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE)
-      .then((cache) => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(CORE_ASSETS);
+    // dictionary.json 较大，缓存失败不阻断离线启动
+    try {
+      await cache.add('dictionary.json');
+    } catch (e) {}
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
