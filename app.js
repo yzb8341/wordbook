@@ -162,12 +162,6 @@ function isActive(token) {
 }
 
 async function spellWord(text, rate, hlFn, token) {
-  const letters = String(text).toLowerCase().replace(/[^a-z]/g, '').split('');
-  for (let i = 0; i < letters.length; i++) {
-    if (!isActive(token)) return false;
-    if (hlFn) hlFn(i);
-    await speak(letters[i], rate);
-  }
   if (!isActive(token)) return false;
   if (hlFn) hlFn(-1);
   await speak(text, rate);
