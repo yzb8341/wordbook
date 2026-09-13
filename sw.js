@@ -1,4 +1,4 @@
-const CACHE = 'wordbook-v1';
+const CACHE = 'wordbook-v2';
 const ASSETS = [
   'index.html',
   'styles.css',
