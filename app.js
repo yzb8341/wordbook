@@ -152,11 +152,131 @@ function ttsText(text) {
   return s;
 }
 
-function speak(text, rate) {
+function b64EncodeAscii(s) {
+  return btoa(s);
+}
+
+function b64EncodeUtf8(s) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function concatBytes(arrays) {
+  let total = 0;
+  for (const a of arrays) total += a.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrays) { out.set(a, off); off += a.length; }
+  return out;
+}
+
+async function hmacSha256Base64(secret, msg) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
+  const bytes = new Uint8Array(sig);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function playBlob(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentAudio = audio;
+    let done = false;
+    let timer = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      if (currentAudio === audio) currentAudio = null;
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+    audio.onended = finish;
+    audio.onerror = finish;
+    audio.play().catch(finish);
+    timer = setTimeout(finish, 12000);
+  });
+}
+
+function synthXfyun(text, appid, apiKey, apiSecret, speed) {
+  const host = 'tts-api.xfyun.cn';
+  const date = new Date().toUTCString();
+  return (async () => {
+    const signatureOrigin = `host: ${host}\ndate: ${date}\nGET /v2/tts HTTP/1.1`;
+    const signature = await hmacSha256Base64(apiSecret, signatureOrigin);
+    const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`;
+    const authorization = b64EncodeAscii(authorizationOrigin);
+    const url = `wss://${host}/v2/tts?authorization=${encodeURIComponent(authorization)}&date=${encodeURIComponent(date)}&host=${host}`;
+    return new Promise((resolve) => {
+      let ws;
+      let settled = false;
+      const chunks = [];
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        try { if (ws) ws.close(); } catch (e) {}
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish(null), 12000);
+      try {
+        ws = new WebSocket(url);
+      } catch (e) { clearTimeout(timer); finish(null); return; }
+      ws.onopen = () => {
+        const payload = {
+          common: { app_id: appid },
+          business: {
+            aue: 'lame', sfl: 1, auf: 'audio/L16;rate=16000',
+            vcn: 'x4_en_us_female', speed: speed, volume: 50, pitch: 50, bgs: 0, tte: 'UTF8'
+          },
+          data: { status: 2, text: b64EncodeUtf8(text) }
+        };
+        ws.send(JSON.stringify(payload));
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.code !== 0) { clearTimeout(timer); finish(null); return; }
+          if (msg.data && msg.data.audio) {
+            chunks.push(msg.data.audio);
+            if (msg.data.status === 2) {
+              clearTimeout(timer);
+              const bytes = concatBytes(chunks.map((b) => b64ToBytes(b)));
+              finish(new Blob([bytes], { type: 'audio/mpeg' }));
+            }
+          }
+        } catch (e) { clearTimeout(timer); finish(null); }
+      };
+      ws.onerror = () => { clearTimeout(timer); finish(null); };
+      ws.onclose = () => { clearTimeout(timer); finish(null); };
+    });
+  })();
+}
+
+async function speakXfyun(text, rate, appid, apiKey, apiSecret) {
+  const speed = Math.max(0, Math.min(100, Math.round(rate * 50)));
+  const blob = await synthXfyun(text, appid, apiKey, apiSecret, speed);
+  if (!blob) return false;
+  await playBlob(blob);
+  return true;
+}
+
+function speakBaidu(text, rate) {
   return new Promise((resolve) => {
     const spoken = ttsText(text);
     if (!spoken) { resolve(); return; }
-    // 百度翻译在线 TTS：国内可访问，任意文本都能读（含连字符/数字）
     const url = `https://fanyi.baidu.com/gettts?lan=en&text=${encodeURIComponent(spoken)}&spd=3&source=web`;
     const audio = new Audio(url);
     currentAudio = audio;
@@ -174,6 +294,19 @@ function speak(text, rate) {
     const fallback = Math.max(1800, (spoken.length + 3) * 900 / Math.max(0.3, rate));
     setTimeout(finish, fallback);
   });
+}
+
+async function speak(text, rate) {
+  const appid = await getSetting('xfyunAppid', '');
+  const apiKey = await getSetting('xfyunApiKey', '');
+  const apiSecret = await getSetting('xfyunApiSecret', '');
+  if (appid && apiKey && apiSecret) {
+    try {
+      const ok = await speakXfyun(text, rate, appid, apiKey, apiSecret);
+      if (ok) return;
+    } catch (e) {}
+  }
+  await speakBaidu(text, rate);
 }
 
 function isActive(token) {
@@ -876,12 +1009,25 @@ function refreshVoices() {
   toast('已刷新语音列表');
 }
 
+async function saveXfyun() {
+  const appid = document.getElementById('xfAppid').value.trim();
+  const apiKey = document.getElementById('xfApiKey').value.trim();
+  const apiSecret = document.getElementById('xfApiSecret').value.trim();
+  await setSetting('xfyunAppid', appid);
+  await setSetting('xfyunApiKey', apiKey);
+  await setSetting('xfyunApiSecret', apiSecret);
+  toast(appid && apiKey && apiSecret ? '已保存，将使用讯飞神经音' : '已清空，将使用百度在线音');
+}
+
 async function renderSettings() {
   setTopbar('设置', null);
   const gap = await getSetting('intervalSeconds', 2);
   const rate = await getSetting('rate', 1);
   const voiceId = await getSetting('voice', '');
   savedVoiceId = voiceId;
+  const xfAppid = await getSetting('xfyunAppid', '');
+  const xfApiKey = await getSetting('xfyunApiKey', '');
+  const xfApiSecret = await getSetting('xfyunApiSecret', '');
   document.getElementById('screen').innerHTML = `
     <div class="card">
       <div class="setting-row">
@@ -901,6 +1047,17 @@ async function renderSettings() {
             <button class="btn ghost" style="padding:8px 12px" onclick="previewVoice()">试听</button>
           </div>
         </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="setting-row">
+        <div><div class="lbl">讯飞语音合成</div><div class="sub">填入后使用讯飞神经音（更自然）；留空则用百度在线</div></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+        <input type="text" id="xfAppid" placeholder="APPID" value="${esc(xfAppid)}" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:15px">
+        <input type="text" id="xfApiKey" placeholder="APIKey" value="${esc(xfApiKey)}" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:15px">
+        <input type="text" id="xfApiSecret" placeholder="APISecret" value="${esc(xfApiSecret)}" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:15px">
+        <button class="btn" onclick="saveXfyun()">保存讯飞密钥</button>
       </div>
     </div>
     <div class="card">
